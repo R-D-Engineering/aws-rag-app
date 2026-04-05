@@ -8,3 +8,9 @@ variable "stage" {
   description = "Deployment stage (dev, staging, prod)"
   type        = string
 }
+
+variable "cognito_domain_prefix" {
+  description = "Prefix for Cognito hosted UI domain (must not contain 'aws')"
+  type        = string
+  default     = "rag-app"
+}

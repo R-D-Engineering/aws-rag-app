@@ -22,6 +22,11 @@ variable "stage" {
   default     = "prod"
 }
 
+variable "cognito_domain_prefix" {
+  description = "Prefix for Cognito hosted UI domain (must not contain 'aws')"
+  type        = string
+  default     = "rag-app"
+}
 # -------------------------
 # Lambda Configuration
 # -------------------------
