@@ -334,6 +334,7 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
