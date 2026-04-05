@@ -68,3 +68,8 @@ variable "cognito_user_pool_arn" {
 variable "cognito_domain" {
   type = string
 }
+variable "api_gateway_account_configured" {
+  description = "Dependency handle ensuring the API GW CloudWatch account role is set"
+  type        = any
+  default     = null
+}

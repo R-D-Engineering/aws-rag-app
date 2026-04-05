@@ -461,12 +461,12 @@ resource "aws_api_gateway_stage" "main" {
       protocol               = "$context.protocol"
       responseLength         = "$context.responseLength"
       integrationErrorMessage = "$context.integrationErrorMessage"
-    })
+    }) 
   }
-  
   tags = {
     Name = "${var.project_name}-${var.stage}-stage"
   }
+  depends_on = [var.api_gateway_account_configured]
 }
 
 # ====================================
