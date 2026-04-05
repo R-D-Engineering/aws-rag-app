@@ -168,9 +168,11 @@ module "api" {
   cognito_user_pool_arn = module.auth.cognito_user_pool_arn
   cognito_domain         = module.auth.cognito_domain
 
+  api_gateway_account_configured = aws_api_gateway_account.main
+
   
   # Make sure compute and auth modules are created first
-  depends_on = [module.compute, module.auth]
+  depends_on = [module.compute, module.auth, aws_api_gateway_account.main]
 }
 
 # =======================
