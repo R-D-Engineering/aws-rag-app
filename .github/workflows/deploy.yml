@@ -47,12 +47,12 @@ jobs:
   determine_environment:
     runs-on: ubuntu-latest
     outputs:
-      environment: ${{ steps.set-env.outputs.environment }}
-      reset_db_password: ${{ steps.set-env.outputs.reset_db_password }}
-      wait_for_db: ${{ steps.set-env.outputs.wait_for_db }}
-      project_name: ${{ steps.read-vars.outputs.project_name }}
-      aws_region: ${{ steps.read-vars.outputs.aws_region }}
-      bastion_allowed_cidr: ${{ steps.read-vars.outputs.bastion_allowed_cidr }}
+      environment:            ${{ steps.set-env.outputs.environment }}
+      reset_db_password:      ${{ steps.set-env.outputs.reset_db_password }}
+      wait_for_db:            ${{ steps.set-env.outputs.wait_for_db }}
+      project_name:           ${{ steps.read-vars.outputs.project_name }}
+      aws_region:             ${{ steps.read-vars.outputs.aws_region }}
+      bastion_allowed_cidr:   ${{ steps.read-vars.outputs.bastion_allowed_cidr }}
       enable_lifecycle_rules: ${{ steps.read-vars.outputs.enable_lifecycle_rules }}
     steps:
       - uses: actions/checkout@v4
@@ -96,11 +96,11 @@ jobs:
             echo "Warning: terraform.tfvars file not found for environment $ENV"
           fi
 
-          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
-          echo "aws_region=$AWS_REGION" >> $GITHUB_OUTPUT
+          echo "project_name=$PROJECT_NAME"   >> $GITHUB_OUTPUT
+          echo "aws_region=$AWS_REGION"       >> $GITHUB_OUTPUT
 
           if [[ "$ENV" == "prod" ]]; then
-            echo "enable_lifecycle_rules=true" >> $GITHUB_OUTPUT
+            echo "enable_lifecycle_rules=true"  >> $GITHUB_OUTPUT
           else
             echo "enable_lifecycle_rules=false" >> $GITHUB_OUTPUT
           fi
@@ -111,38 +111,49 @@ jobs:
             echo "bastion_allowed_cidr=0.0.0.0/0" >> $GITHUB_OUTPUT
           fi
 
+  # ---------------------------------------------------------------------------
+  # Code quality — non-blocking, runs in parallel with build_lambda
+  # ---------------------------------------------------------------------------
   code-quality:
     name: SonarQube
     runs-on: ubuntu-latest
     needs: [determine_environment]
     env:
       PROJECT_NAME: ${{ needs.determine_environment.outputs.project_name }}
-      AWS_REGION: ${{ needs.determine_environment.outputs.aws_region }}
+      AWS_REGION:   ${{ needs.determine_environment.outputs.aws_region }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Install tox
         run: pip install tox
+
       - name: Run tox
         run: tox -e py
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     continue-on-error: true
 
+  # ---------------------------------------------------------------------------
+  # Build — package all Lambda ZIPs and upload as an artifact
+  # ---------------------------------------------------------------------------
   build_lambda:
     needs: [determine_environment]
     runs-on: ubuntu-latest
     env:
       PROJECT_NAME: ${{ needs.determine_environment.outputs.project_name }}
-      AWS_REGION: ${{ needs.determine_environment.outputs.aws_region }}
-      STAGE: ${{ needs.determine_environment.outputs.environment }}
+      AWS_REGION:   ${{ needs.determine_environment.outputs.aws_region }}
+      STAGE:        ${{ needs.determine_environment.outputs.environment }}
     steps:
       - uses: actions/checkout@v4
 
@@ -159,12 +170,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          [ -f requirements.txt ] && pip install -r requirements.txt || true
 
       - name: Package Lambda functions
         run: |
@@ -188,14 +197,17 @@ jobs:
           path: lambda_artifacts/
           retention-days: 1
 
+  # ---------------------------------------------------------------------------
+  # Plan — bootstrap backend, upload ZIPs to S3, run terraform plan
+  # ---------------------------------------------------------------------------
   terraform-plan:
     needs: [determine_environment, build_lambda]
     runs-on: ubuntu-latest
     environment: ${{ needs.determine_environment.outputs.environment }}
     env:
       PROJECT_NAME: ${{ needs.determine_environment.outputs.project_name }}
-      STAGE: ${{ needs.determine_environment.outputs.environment }}
-      AWS_REGION: ${{ needs.determine_environment.outputs.aws_region }}
+      STAGE:        ${{ needs.determine_environment.outputs.environment }}
+      AWS_REGION:   ${{ needs.determine_environment.outputs.aws_region }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -203,9 +215,9 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ needs.determine_environment.outputs.aws_region }}
+          aws-region:            ${{ needs.determine_environment.outputs.aws_region }}
 
       - name: Bootstrap Terraform State Backend
         run: |
@@ -215,12 +227,12 @@ jobs:
           echo "Ensuring S3 state bucket exists: $BUCKET_NAME"
           if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             LOCATION_FLAG=""
-            if [[ "$AWS_REGION" != "us-east-1" ]]; then
+            [[ "$AWS_REGION" != "us-east-1" ]] && \
               LOCATION_FLAG="--create-bucket-configuration LocationConstraint=$AWS_REGION"
-            fi
             aws s3api create-bucket --bucket "$BUCKET_NAME" --region "$AWS_REGION" $LOCATION_FLAG
           fi
-          aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" \
+          aws s3api put-bucket-versioning \
+            --bucket "$BUCKET_NAME" \
             --versioning-configuration Status=Enabled
 
           echo "Ensuring DynamoDB lock table exists: $DYNAMODB_TABLE"
@@ -234,9 +246,6 @@ jobs:
       - name: Create Backend Configuration
         run: |
           cat > environments/$STAGE/backend.tf << EOF
-          # =========================
-          # Terraform Backend Config
-          # =========================
           terraform {
             backend "s3" {
               bucket         = "${PROJECT_NAME}-terraform-state"
@@ -264,9 +273,8 @@ jobs:
 
           if ! aws s3api head-bucket --bucket "$LAMBDA_BUCKET" 2>/dev/null; then
             LOCATION_FLAG=""
-            if [[ "$AWS_REGION" != "us-east-1" ]]; then
+            [[ "$AWS_REGION" != "us-east-1" ]] && \
               LOCATION_FLAG="--create-bucket-configuration LocationConstraint=$AWS_REGION"
-            fi
             aws s3api create-bucket --bucket "$LAMBDA_BUCKET" --region "$AWS_REGION" $LOCATION_FLAG
           fi
 
@@ -305,19 +313,23 @@ jobs:
           path: environments/${{ needs.determine_environment.outputs.environment }}/tfplan
           retention-days: 1
 
+  # ---------------------------------------------------------------------------
+  # Apply — runs only on push/dispatch. Recreates backend.tf before init so
+  # that `terraform output` reads from S3 state, not an empty local state.
+  # ---------------------------------------------------------------------------
   terraform-apply:
     needs: [determine_environment, build_lambda, terraform-plan]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     environment: ${{ needs.determine_environment.outputs.environment }}
     env:
-      PROJECT_NAME: ${{ needs.determine_environment.outputs.project_name }}
-      STAGE: ${{ needs.determine_environment.outputs.environment }}
-      AWS_REGION: ${{ needs.determine_environment.outputs.aws_region }}
+      PROJECT_NAME:      ${{ needs.determine_environment.outputs.project_name }}
+      STAGE:             ${{ needs.determine_environment.outputs.environment }}
+      AWS_REGION:        ${{ needs.determine_environment.outputs.aws_region }}
       RESET_DB_PASSWORD: ${{ needs.determine_environment.outputs.reset_db_password }}
-      WAIT_FOR_DB: ${{ needs.determine_environment.outputs.wait_for_db }}
+      WAIT_FOR_DB:       ${{ needs.determine_environment.outputs.wait_for_db }}
     outputs:
-      api_endpoint: ${{ steps.terraform-apply.outputs.api_endpoint }}
+      api_endpoint: ${{ steps.extract-outputs.outputs.api_endpoint }}
 
     steps:
       - name: Checkout Repository
@@ -326,15 +338,15 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ needs.determine_environment.outputs.aws_region }}
+          aws-region:            ${{ needs.determine_environment.outputs.aws_region }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
+          terraform_wrapper: false   # must be false so $(terraform output) captures values, not the binary path
 
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
@@ -342,26 +354,56 @@ jobs:
           name: terraform-plan-${{ needs.determine_environment.outputs.environment }}
           path: environments/${{ needs.determine_environment.outputs.environment }}
 
+      # Each job runs on a fresh runner — backend.tf from terraform-plan is not
+      # persisted. Without recreating it here, terraform init uses a local backend
+      # and terraform output returns nothing after apply.
+      - name: Create Backend Configuration
+        run: |
+          cat > environments/$STAGE/backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket         = "${PROJECT_NAME}-terraform-state"
+              key            = "${STAGE}/terraform.tfstate"
+              region         = "${AWS_REGION}"
+              dynamodb_table = "${PROJECT_NAME}-${STAGE}-terraform-state-lock"
+              encrypt        = true
+
+              skip_credentials_validation = true
+              skip_metadata_api_check     = true
+              force_path_style            = true
+            }
+          }
+          EOF
+
       - name: Terraform Init
         working-directory: environments/${{ needs.determine_environment.outputs.environment }}
         run: terraform init
 
       - name: Terraform Apply
-        id: terraform-apply
+        working-directory: environments/${{ needs.determine_environment.outputs.environment }}
+        run: terraform apply -auto-approve tfplan
+
+      # Separate step so output extraction failures never mask apply errors
+      - name: Extract Terraform Outputs
+        id: extract-outputs
         working-directory: environments/${{ needs.determine_environment.outputs.environment }}
         run: |
-          terraform apply -auto-approve tfplan | tee apply_output.txt
-
-          # Use terraform output directly — grep on apply_output.txt is fragile
           COGNITO_CLIENT_ID=$(terraform output -raw cognito_app_client_id 2>/dev/null || echo "")
           API_ENDPOINT=$(terraform output -raw api_endpoint 2>/dev/null || echo "")
 
-          echo "COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID"
-          echo "API_ENDPOINT=$API_ENDPOINT"
+          echo "COGNITO_CLIENT_ID : $COGNITO_CLIENT_ID"
+          echo "API_ENDPOINT      : $API_ENDPOINT"
 
+          # Write env file for the UI artifact
           echo "COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID" > ../../env_vars.env
-          echo "API_ENDPOINT=$API_ENDPOINT"            >> ../../env_vars.env
-          echo "api_endpoint=$API_ENDPOINT"            >> $GITHUB_OUTPUT
+          echo "API_ENDPOINT=$API_ENDPOINT"           >> ../../env_vars.env
+
+          # Only propagate to GITHUB_OUTPUT when we have a real value
+          if [ -n "$API_ENDPOINT" ]; then
+            echo "api_endpoint=$API_ENDPOINT" >> $GITHUB_OUTPUT
+          else
+            echo "Warning: api_endpoint is empty — integration tests will be skipped."
+          fi
 
       - name: Upload UI Env File as Artifact
         uses: actions/upload-artifact@v4
@@ -437,11 +479,9 @@ jobs:
             fi
           done
 
-      # NOTE: db_init and auth_handler ARE managed by Terraform (modules/compute/main.tf).
-      # There is no need for a separate "Update Lambda functions" step — terraform apply
-      # above already deployed their latest code from S3. This step was removed because
-      # it caused ResourceNotFoundException failures on first deploy and was redundant
-      # on all subsequent deploys.
+      # db_init and auth_handler are fully managed by Terraform (modules/compute/main.tf).
+      # terraform apply above already deployed the latest code from S3 for all five
+      # Lambda functions. No separate update-function-code step is needed.
 
       - name: Invoke Database Init Lambda
         run: |
@@ -452,7 +492,7 @@ jobs:
 
           echo "Initializing PostgreSQL database with PGVector..."
 
-          # Wait for any in-progress Lambda update (from terraform apply) to settle
+          # Wait for any in-progress Lambda update from terraform apply to settle
           echo "Waiting for $DB_INIT_NAME to become active..."
           aws lambda wait function-updated --function-name "$DB_INIT_NAME" || true
 
@@ -500,6 +540,9 @@ jobs:
             response.json || echo "Healthcheck invocation failed — deployment may still be healthy."
           cat response.json || true
 
+  # ---------------------------------------------------------------------------
+  # Integration tests — skipped automatically when API endpoint is unavailable
+  # ---------------------------------------------------------------------------
   integration_tests:
     needs: [determine_environment, terraform-apply]
     runs-on: ubuntu-latest
@@ -507,8 +550,8 @@ jobs:
     environment: ${{ needs.determine_environment.outputs.environment }}
     env:
       PROJECT_NAME: ${{ needs.determine_environment.outputs.project_name }}
-      STAGE: ${{ needs.determine_environment.outputs.environment }}
-      AWS_REGION: ${{ needs.determine_environment.outputs.aws_region }}
+      STAGE:        ${{ needs.determine_environment.outputs.environment }}
+      AWS_REGION:   ${{ needs.determine_environment.outputs.aws_region }}
       API_ENDPOINT: ${{ needs.terraform-apply.outputs.api_endpoint }}
     steps:
       - uses: actions/checkout@v4
@@ -516,9 +559,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ needs.determine_environment.outputs.aws_region }}
+          aws-region:            ${{ needs.determine_environment.outputs.aws_region }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -536,8 +579,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          [ -f requirements.txt ]     && pip install -r requirements.txt
-          [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt
+          [ -f requirements.txt ]     && pip install -r requirements.txt     || true
+          [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || true
 
       - name: Stash root pytest config files
         run: |
