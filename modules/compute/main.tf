@@ -265,7 +265,7 @@ resource "aws_lambda_function" "query_processor" {
       TOP_K                    = 40
       TOP_P                    = 0.8
       SIMILARITY_THRESHOLD     = 0.7
-      ENABLE_EVALUATION = "false"
+      ENABLE_EVALUATION        = "false"
 
       # MCP Configuration
       MCP_TIMEOUT              = var.mcp_timeout
