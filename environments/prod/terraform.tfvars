@@ -39,3 +39,4 @@ import_db             = false
 reset_db_password     = false  # Only set to true when you need to reset the password
 
 cognito_domain_prefix = "rag-app"
+
