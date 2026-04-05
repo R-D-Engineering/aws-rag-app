@@ -1,74 +1,24 @@
-# Database Module variables.tf
-variable "project_name" {
-  description = "Name of the project"
-  type        = string
+output "db_instance_id" {
+  description = "ID of the RDS instance"
+  value       = local.create_db && length(aws_db_instance.postgres) > 0 ? aws_db_instance.postgres[0].id : "${local.name}-postgres"
 }
 
-variable "stage" {
-  description = "Deployment stage (dev, staging, prod)"
-  type        = string
+output "db_instance_address" {
+  description = "The address of the RDS instance"
+  value       = local.create_db && length(aws_db_instance.postgres) > 0 ? aws_db_instance.postgres[0].address : local.db_endpoint_fallback
 }
 
-variable "aws_region" {
-  description = "AWS region for all resources"
-  type        = string
-  default     = "us-east-1"
+output "db_instance_endpoint" {
+  description = "The connection endpoint of the RDS instance"
+  value       = local.create_db && length(aws_db_instance.postgres) > 0 ? aws_db_instance.postgres[0].endpoint : "${local.db_endpoint_fallback}:${local.db_port_fallback}"
 }
 
-variable "db_subnet_group_name" {
-  description = "Name of the DB subnet group"
-  type        = string
+output "db_instance_port" {
+  description = "The port of the RDS instance"
+  value       = local.create_db && length(aws_db_instance.postgres) > 0 ? aws_db_instance.postgres[0].port : local.db_port_fallback
 }
 
-variable "db_security_group_id" {
-  description = "ID of the security group for the database"
-  type        = string
-}
-
-variable "db_instance_class" {
-  description = "Instance class for the RDS instance"
-  type        = string
-  default     = "db.t3.micro"
-}
-
-variable "db_allocated_storage" {
-  description = "Allocated storage for the RDS instance in GiB"
-  type        = number
-  default     = 20
-}
-
-variable "db_engine_version" {
-  description = "Engine version for PostgreSQL"
-  type        = string
-  default     = "15"
-}
-
-variable "db_name" {
-  description = "Name of the database"
-  type        = string
-  default     = "ragapp"
-}
-
-variable "db_username" {
-  description = "Username for the database"
-  type        = string
-  default     = "ragadmin"
-}
-
-variable "skip_final_snapshot" {
-  description = "Whether to skip the final snapshot when the database is deleted"
-  type        = bool
-  default     = true
-}
-
-variable "import_db" {
-  description = "Whether to import existing database"
-  type        = bool
-  default     = false
-}
-
-variable "reset_db_password" {
-  description = "Flag to reset the database password"
-  type        = bool
-  default     = false
+output "db_credentials_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the database credentials"
+  value       = aws_secretsmanager_secret.db_credentials.arn
 }
