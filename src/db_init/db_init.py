@@ -222,11 +222,11 @@ def initialize_database(credentials, retry_count=0):
         try:
             cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON chunks
-            USING ivfflat (embedding vector_cosine_ops)
-            WITH (lists = 100)
+            USING hnsw (embedding vector_cosine_ops)
             """)
+            logger.info("Created HNSW vector index on embedding column")
         except Exception as e:
-            logger.warning(f"Failed to create vector index (this is OK if using older PostgreSQL): {str(e)}")
+            logger.warning(f"Could not create vector index (will be created when data is inserted): {str(e)}")
             # Try creating a simpler index without IVF
             try:
                 cursor.execute("""

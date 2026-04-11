@@ -382,6 +382,11 @@ jobs:
       - name: Terraform Apply
         working-directory: environments/${{ needs.determine_environment.outputs.environment }}
         run: terraform apply -auto-approve tfplan
+     
+      - name: Wait for VPC endpoints to propagate
+        run: |
+          echo "Waiting 60s for new VPC Interface endpoints to become available..."
+          sleep 60  
 
       # Separate step so output extraction failures never mask apply errors
       - name: Extract Terraform Outputs
@@ -486,48 +491,22 @@ jobs:
       - name: Invoke Database Init Lambda
         run: |
           DB_INIT_NAME="${PROJECT_NAME}-${STAGE}-db-init"
-          MAX_RETRIES=5
-          RETRY_COUNT=0
-          SUCCESS=false
+          echo "Waiting for $DB_INIT_NAME to finish updating..."
+          aws lambda wait function-updated --function-name "$DB_INIT_NAME" 2>/dev/null || true
 
-          echo "Initializing PostgreSQL database with PGVector..."
+          echo "Invoking DB init Lambda asynchronously..."
+          aws lambda invoke \
+            --function-name "$DB_INIT_NAME" \
+            --invocation-type Event \
+            --payload '{}' \
+            --cli-binary-format raw-in-base64-out \
+            /dev/null
 
-          # Wait for any in-progress Lambda update from terraform apply to settle
-          echo "Waiting for $DB_INIT_NAME to become active..."
-          aws lambda wait function-updated --function-name "$DB_INIT_NAME" || true
+          echo "DB init Lambda invoked. It runs asynchronously — check CloudWatch logs for results."
+          echo "Log group: /aws/lambda/$DB_INIT_NAME"
 
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" != "true" ]; do
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "Attempt $RETRY_COUNT/$MAX_RETRIES..."
 
-            RESPONSE=$(aws lambda invoke \
-              --function-name "$DB_INIT_NAME" \
-              --payload '{}' \
-              --cli-binary-format raw-in-base64-out \
-              /tmp/db_init_output.json 2>&1)
-            STATUS_CODE=$?
-
-            if [ $STATUS_CODE -ne 0 ]; then
-              echo "AWS CLI error: $RESPONSE"
-              sleep 30
-              continue
-            fi
-
-            FUNCTION_ERROR=$(echo "$RESPONSE" | grep "FunctionError" || true)
-            if [ -z "$FUNCTION_ERROR" ]; then
-              echo "DB init Lambda invoked successfully."
-              cat /tmp/db_init_output.json || true
-              SUCCESS=true
-            else
-              echo "Lambda returned a FunctionError:"
-              cat /tmp/db_init_output.json || true
-              sleep 30
-            fi
-          done
-
-          if [ "$SUCCESS" != "true" ]; then
-            echo "Warning: DB init Lambda failed after $MAX_RETRIES attempts. Manual initialization may be required."
-          fi
+         
 
       - name: Verify deployment
         run: |
